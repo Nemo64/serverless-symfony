@@ -1,0 +1,44 @@
+{% extends 'base.html.twig' %}
+{% form_theme form 'bootstrap_4_layout.html.twig' %}
+
+{% block body %}
+    <div class="container">
+        <div class="row my-5">
+            <div class="col">
+                <ul class="list-group list-group-flush">
+                    {% for message in messages %}
+                        <li class="list-group-item">
+                            <strong>{{ message.user }}</strong>
+                            {{ message.body|nl2br }}
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            <div class="col-sm-6 col-lg-4">
+                {{ form(form) }}
+            </div>
+        </div>
+        <div class="my-5">
+            <dl>
+                <dt>current page</dt>
+                <dd><a href="{{ url('chat') }}">link</a></dd>
+                <dt>host</dt>
+                <dd>{{ app.request.host }}</dd>
+                <dt>ip</dt>
+                <dd>{{ app.request.clientIps|join(' or ') }}</dd>
+                <dt>headers</dt>
+                <dd>
+                    {% for key,value in app.request.headers.all %}
+                        <div>{{ key }}: {{ value|join(';') }}</div>
+                    {% endfor %}
+                </dd>
+                <dt>server</dt>
+                <dd>
+                    {% for key,value in app.request.server.all %}
+                        <div>{{ key }}: {{ value|join(';') }}</div>
+                    {% endfor %}
+                </dd>
+            </dl>
+        </div>
+    </div>
+{% endblock %}

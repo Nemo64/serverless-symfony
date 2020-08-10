@@ -1,0 +1,13 @@
+framework:
+    session:
+        handler_id: AsyncAws\DynamoDbSession\SessionHandler
+    router:
+        # https://symfony.com/blog/new-in-symfony-5-1-simpler-request-context
+        default_uri: 'https://%env(HTTP_X_FORWARDED_HOST)%'
+
+services:
+    AsyncAws\DynamoDbSession\SessionHandler:
+        class: AsyncAws\DynamoDbSession\SessionHandler
+        arguments:
+            - '@async_aws.client.dynamo_db'
+            -   table_name: '%env(resolve:SESSION_TABLE)%'

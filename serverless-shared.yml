@@ -1,0 +1,282 @@
+service: sls-symfony-shared
+
+provider:
+  name: aws
+  region: eu-west-1
+  stage: ${opt:stage, 'global'}
+  # Allow using CloudFormation variable syntax without changing the serverless syntax
+  # The differentiating factor is the capitalization of the first character
+  # Upper case character means CloudFormation syntax, eg: ${AWS::Region}, ${DatabaseSecret}
+  # Everything else means serverless syntax, eg: ${ssm:...}, ${self:...}
+  # https://www.serverless.com/framework/docs/providers/aws/guide/variables#using-custom-variable-syntax
+  variableSyntax: "\\${((?![A-Z])[ ~:a-zA-Z0-9._@'\",\\-\\/\\(\\)]+?)}"
+
+resources:
+  Transform:
+    - AWS::SecretsManager-2020-07-23 # for the password rotation function
+    - AWS::Serverless-2016-10-31 # for inline lambda function
+
+  Resources:
+
+    # Configure a simple vpc.
+    # It is roughly inspired by the official template but there aren't public or private subnets.
+    # https://docs.aws.amazon.com/codebuild/latest/userguide/cloudformation-vpc-template.html
+
+    VPC:
+      Type: AWS::EC2::VPC
+      Properties: {CidrBlock: 10.192.0.0/16, EnableDnsSupport: true, EnableDnsHostnames: true}
+    Subnet1:
+      Type: AWS::EC2::Subnet
+      Properties: {CidrBlock: 10.192.0.0/20, AvailabilityZone: !Select [0, !GetAZs ''], VpcId: !Ref VPC}
+    Subnet2:
+      Type: AWS::EC2::Subnet
+      Properties: {CidrBlock: 10.192.16.0/20, AvailabilityZone: !Select [1, !GetAZs ''], VpcId: !Ref VPC}
+    Subnet3:
+      Type: AWS::EC2::Subnet
+      Properties: {CidrBlock: 10.192.32.0/20, AvailabilityZone: !Select [2, !GetAZs ''], VpcId: !Ref VPC}
+    # VPC endpoint that will enable the rotation Lambda to make api calls to Secrets Manager
+    VpcEndpointSecretManager:
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        SubnetIds: [!Ref Subnet1, !Ref Subnet2, !Ref Subnet3]
+        SecurityGroupIds: [!GetAtt VPC.DefaultSecurityGroup]
+        VpcEndpointType: Interface
+        ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+        PrivateDnsEnabled: true
+        VpcId: !Ref VPC
+
+    # Configure a Database Server
+
+    DatabaseSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: Database Subnets
+        SubnetIds: [!Ref Subnet1, !Ref Subnet2, !Ref Subnet3]
+    DatabaseSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Database Access
+        VpcId: !Ref VPC
+        SecurityGroupIngress:
+          - {CidrIp: !GetAtt VPC.CidrBlock, FromPort: 3306, ToPort: 3306, IpProtocol: tcp}
+    DatabaseSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: !Sub '/${AWS::StackName}/database/root'
+        GenerateSecretString:
+          SecretStringTemplate: '{"username": "root"}'
+          GenerateStringKey: "password"
+          ExcludeCharacters: '"@/\'
+    DatabaseSecretAttachment:
+      Type: AWS::SecretsManager::SecretTargetAttachment
+      Properties:
+        SecretId: !Ref DatabaseSecret
+        TargetId: !Ref DatabaseServer
+        TargetType: AWS::RDS::DBCluster
+    DatabaseSecretRotation:
+      Type: AWS::SecretsManager::RotationSchedule
+      DependsOn: [DatabaseSecretAttachment, VpcEndpointSecretManager]
+      Properties:
+        SecretId: !Ref DatabaseSecret
+        RotationRules: {AutomaticallyAfterDays: 30}
+        HostedRotationLambda:
+          RotationType: MySQLSingleUser
+          RotationLambdaName: !Sub '${AWS::StackName}-database-secret-rotation'
+          VpcSecurityGroupIds: !GetAtt VPC.DefaultSecurityGroup
+          VpcSubnetIds: !Join [',', [!Ref Subnet1, !Ref Subnet2, !Ref Subnet3]]
+    DatabaseServer:
+      Type: AWS::RDS::DBCluster
+      Properties:
+        Engine: aurora-mysql # aurora = mysql 5.6, aurora-mysql = mysql 5.7
+        EngineMode: serverless
+        EnableHttpEndpoint: true
+        MasterUsername: !Sub '{{resolve:secretsmanager:${DatabaseSecret}:SecretString:username}}'
+        MasterUserPassword: !Sub '{{resolve:secretsmanager:${DatabaseSecret}:SecretString:password}}'
+        BackupRetentionPeriod: 10 # days
+        ScalingConfiguration: {MinCapacity: 1, MaxCapacity: 2, AutoPause: true}
+        DBSubnetGroupName: !Ref DatabaseSubnetGroup
+        VpcSecurityGroupIds: [!GetAtt DatabaseSecurityGroup.GroupId]
+    DatabaseScalingSchedule:
+      Type: AWS::Serverless::Function
+      Properties:
+        Description: !Sub 'Changes the Scaling Configuration of the database ${DatabaseServer}.'
+        FunctionName: !Sub '${AWS::StackName}-database-scaling'
+        Handler: index.handler
+        Runtime: nodejs12.x
+        MemorySize: 128 # mb, this function basically just waits for the api
+        Role: !GetAtt DatabaseAccessPolicy.Arn
+        Environment: {Variables: {SERVER: !Ref DatabaseServer}}
+        # Feel free to define a scaling schedule here
+        #Events:
+        #  Worktime: {Type: Schedule, Properties: {Schedule: 'cron(5 13 ? * MON-FRI *)', Input: '{"AutoPause": false, "MinCapacity": 1, "MaxCapacity": 4}'}}
+        #  Freetime: {Type: Schedule, Properties: {Schedule: 'cron(10 13 * * ? *)', Input: '{"AutoPause": true, "MinCapacity": 1, "MaxCapacity": 2}'}}
+        InlineCode: |-
+          const RDS = new (require('aws-sdk/clients/rds'))({apiVersion: '2014-10-31'});
+          exports.handler = async function (event) {
+              return await RDS.modifyDBCluster({DBClusterIdentifier: process.env.SERVER, ScalingConfiguration: event}).promise();
+          };
+
+    # Create some lambda functions to easily manage the database.
+    # Those are then exported for use in different stacks.
+
+    DatabaseAccessPolicy:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: !Sub '${AWS::StackName}-${AWS::Region}-database-access-policy'
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - {Effect: Allow, Action: sts:AssumeRole, Principal: {Service: [lambda.amazonaws.com]}}
+        Policies:
+          - PolicyName: !Sub "${AWS::StackName}-database-access"
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - {Effect: Allow, Action: logs:CreateLog*, Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}*:*'}
+                - {Effect: Allow, Action: logs:PutLogEvents, Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}*:*:*'}
+                - {Effect: Allow, Action: rds-data:ExecuteStatement, Resource: '*'}
+                - {Effect: Allow, Action: secretsmanager:GetSecretValue, Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${AWS::StackName}/database/*'}
+                - {Effect: Allow, Action: rds:ModifyDBCluster, Resource: !Sub 'arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DatabaseServer}'}
+    DatabaseResourceLambda:
+      Type: AWS::Serverless::Function
+      Properties:
+        Description: !Sub 'Provides a custom CloudFormation resource to create MySQL databases in ${DatabaseServer}.'
+        FunctionName: !Sub '${AWS::StackName}-database-resource'
+        Handler: index.handler
+        Runtime: nodejs12.x
+        MemorySize: 128 # mb, this function basically just waits for the database
+        Role: !GetAtt DatabaseAccessPolicy.Arn # attach role to access the database
+        Environment:
+          Variables:
+            resourceArn: !Sub 'arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DatabaseServer}'
+            secretArn: !Ref DatabaseSecret
+        InlineCode: |-
+          const RDSDataService = new (require('aws-sdk/clients/rdsdataservice'))({apiVersion: '2018-08-01'});
+          const response = require('cfn-response');
+          const {resourceArn, secretArn} = process.env;
+
+          exports.handler = async function (event, context) {
+              try {
+                  console.log(event);
+                  const name = event.ResourceProperties.Name;
+
+                  if (event.RequestType === 'Delete') {
+                      await executeStatement('DROP DATABASE IF EXISTS `' + name + '`');
+                      return await response.send(event, context, response.SUCCESS);
+                  }
+
+                  if (name !== event.PhysicalResourceId) {
+                      await executeStatement('CREATE DATABASE `' + name + '`');
+                  }
+
+                  return await response.send(event, context, response.SUCCESS, {Server: resourceArn}, name);
+              } catch (error) {
+                  if (/^Communications link failure/.test(error.message)) {
+                      throw error; // let lambda reattempt this action if aurora is paused
+                  }
+
+                  console.error(error);
+                  return await response.send(event, context, response.FAILED);
+              }
+          };
+
+          function executeStatement(sql) {
+              console.log(sql);
+              return RDSDataService.executeStatement({resourceArn, secretArn, sql}).promise();
+          }
+
+    DatabaseUserResourceLambda:
+      Type: AWS::Serverless::Function
+      Properties:
+        Description: !Sub 'Provides a custom CloudFormation resource to create MySQL users in ${DatabaseServer}.'
+        FunctionName: !Sub '${AWS::StackName}-database-user-resource'
+        Handler: index.handler
+        Runtime: nodejs12.x
+        MemorySize: 128 # mb, this function basically just waits for the database
+        Role: !GetAtt DatabaseAccessPolicy.Arn # attach role to access the database
+        Environment:
+          Variables:
+            resourceArn: !Sub 'arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DatabaseServer}'
+            secretArn: !Ref DatabaseSecret
+        InlineCode: |-
+          const RDSDataService = new (require('aws-sdk/clients/rdsdataservice'))({apiVersion: '2018-08-01'});
+          const SecretsManager = new (require('aws-sdk/clients/secretsmanager'))({apiVersion: '2017-10-17'});
+          const response = require('cfn-response');
+          const {resourceArn, secretArn} = process.env;
+
+          exports.handler = async function (event, context) {
+              try {
+                  console.log(event);
+                  const userSecretId = event.ResourceProperties.SecretId;
+                  const secret = await SecretsManager.getSecretValue({SecretId: userSecretId}).promise();
+                  const {username, password} = JSON.parse(secret.SecretString);
+
+                  if (event.RequestType === 'Delete') {
+                      await executeStatement('DROP USER IF EXISTS :username', {username});
+                      return await response.send(event, context, response.SUCCESS);
+                  }
+
+                  if (userSecretId !== event.PhysicalResourceId) {
+                      await executeStatement('CREATE USER :username IDENTIFIED BY :password', {username, password});
+                  }
+
+                  await executeStatement('REVOKE ALL PRIVILEGES, GRANT OPTION FROM :username', {username});
+                  for (const {Permission, Database, Table} of event.ResourceProperties.Privileges) {
+                      await executeStatement("GRANT " + Permission + " ON `" + Database + "`." + Table + " TO :username", {username});
+                  }
+
+                  return await response.send(event, context, response.SUCCESS, null, userSecretId);
+              } catch (error) {
+                  if (/^Communications link failure/.test(error.message)) {
+                      throw error; // let lambda reattempt this action if aurora is paused
+                  }
+
+                  console.error(error);
+                  return await response.send(event, context, response.FAILED);
+              }
+          };
+
+          function executeStatement(sql, parameters) {
+              console.log(sql);
+              parameters = Object.entries(parameters).map(([name, stringValue]) => ({name, value: {stringValue}}));
+              return RDSDataService.executeStatement({resourceArn, secretArn, sql, parameters}).promise();
+          }
+
+
+  Outputs:
+    # You can export the vpc, but I wouldn't recommend using it in a separate stack
+    #VPC:
+    #  Description: Reference to the VPC
+    #  Value: !Ref VPC
+    #  Export: {Name: !Sub '${AWS::StackName}-vpc'}
+    #DefaultSecurityGroup:
+    #  Description: DefaultSecurityGroup
+    #  Value: !GetAtt VPC.DefaultSecurityGroup
+    #  Export: {Name: !Sub '${AWS::StackName}-default-security-group'}
+    #Subnets:
+    #  Description: List of the subnets
+    #  Value: !Join [',', [!Ref Subnet1, !Ref Subnet2, !Ref Subnet3]]
+    #  Export: {Name: !Sub '${AWS::StackName}-subnets'}
+
+    # You must not use the database directly, just create a separate user for each service
+    #DatabaseSecret:
+    #  Description: The Database Secret Arn
+    #  Value: !Ref DatabaseSecret
+    #  Export: {Name: !Sub '${AWS::StackName}-database-secret'}
+    DatabaseServer:
+      Description: The Database Server Arn
+      Value: !Sub 'arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DatabaseServer}'
+      Export: {Name: !Sub '${AWS::StackName}-database-server'}
+    DatabaseSecretRotationLambda:
+      Description: Secret Rotation Lambda Arn
+      Value: !GetAtt DatabaseSecretRotationHostedRotationLambda.Outputs.RotationLambdaARN
+      Export: {Name: !Sub '${AWS::StackName}-database-secret-rotation-lambda'}
+
+    DatabaseServiceToken:
+      Description: Lambda function that can be used to create a database on a database server in CloudFormation
+      Value: !GetAtt DatabaseResourceLambda.Arn
+      Export: {Name: !Sub '${AWS::StackName}-database-service-token'}
+    DatabaseUserServiceToken:
+      Description: Lambda function that can be used to create a user on the database server in CloudFormation
+      Value: !GetAtt DatabaseUserResourceLambda.Arn
+      Export: {Name: !Sub '${AWS::StackName}-database-user-service-token'}

@@ -1,0 +1,8 @@
+framework:
+    cache:
+        # write all caches into the filesystem
+        system: cache.adapter.filesystem # instead of cache.adapter.system
+        app: cache.adapter.filesystem # this is the default but i like to be explicit here
+
+        # in lambda, /tmp is writable although limited to the this lambda instance
+        directory: '/tmp/pools'

@@ -1,0 +1,25 @@
+doctrine:
+    dbal:
+        # the url can override the driver class
+        # but I can't define this driver in the url which is why i made it the default
+        # Doctrine\DBAL\DriverManager::parseDatabaseUrlScheme
+        driver_class: Nemo64\DbalRdsData\RdsDataDriver
+    orm:
+        auto_generate_proxy_classes: false
+        metadata_cache_driver:
+            type: pool
+            pool: doctrine.system_cache_pool
+        query_cache_driver:
+            type: pool
+            pool: doctrine.system_cache_pool
+        result_cache_driver:
+            type: pool
+            pool: doctrine.result_cache_pool
+
+framework:
+    cache:
+        pools:
+            doctrine.result_cache_pool:
+                adapter: cache.app
+            doctrine.system_cache_pool:
+                adapter: cache.system

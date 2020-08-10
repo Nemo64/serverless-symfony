@@ -1,0 +1,13 @@
+monolog:
+    handlers:
+        main:
+            type: stream
+            path: "php://stderr"
+            level: debug # info, notice, warning or error but I keep it at debug to start out
+            formatter: app.monolog.formatter.cloudwatch
+
+services:
+    app.monolog.formatter.cloudwatch:
+        class: Monolog\Formatter\LineFormatter
+        # default format but without date since cloudwatch adds that already
+        arguments: ["%%channel%%.%%level_name%%: %%message%% %%context%% %%extra%%\n"]

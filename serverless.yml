@@ -1,0 +1,227 @@
+service: sls-symfony
+
+
+plugins:
+  - ./vendor/bref/bref
+
+
+custom:
+
+  # the name of the stack which contains shareable resources, mainly the MySQL Database
+  SharedStack: ${env:SHARED_STACK, 'sls-symfony-shared-global'}
+
+  # to configure a custom domain, set 2 environment variables during deploy
+  # - DOMAIN = your.domain.com
+  # - CERTIFICATE = arn:of:your:certificate
+  ApiGatewayDomainName: !Sub '${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+  DistributionDomainName: !GetAtt Distribution.DomainName
+  DomainName: ${env:DOMAIN, self:custom.DistributionDomainName}
+  DomainConfiguration:
+    current: ${self:custom.DomainConfiguration.${env:CERTIFICATE, 'withoutCertificate'}, self:custom.DomainConfiguration.withCertificate}
+    withoutCertificate:
+      Aliases: !Ref AWS::NoValue
+      ViewerCertificate: !Ref AWS::NoValue
+    withCertificate:
+      Aliases: ['${self:custom.DomainName}']
+      ViewerCertificate:
+        AcmCertificateArn: ${env:CERTIFICATE, 'null'}
+        SslSupportMethod: sni-only
+        MinimumProtocolVersion: TLSv1.2_2018
+
+
+provider:
+  name: aws
+  region: eu-west-1
+
+  # Use the username as the default stage
+  # This way, multiple developers don't get in the way of each other.
+  stage: ${opt:stage, env:USER}
+
+  # Allow using CloudFormation variable syntax without changing the serverless syntax
+  # The differentiating factor is the capitalization of the first character
+  # Upper case character means CloudFormation syntax, eg: ${AWS::Region}, ${DatabaseSecret}
+  # Everything else means serverless syntax, eg: ${ssm:...}, ${self:...}
+  # https://www.serverless.com/framework/docs/providers/aws/guide/variables#using-custom-variable-syntax
+  variableSyntax: "\\${((?![A-Z])[ ~:a-zA-Z0-9._@'\",\\-\\/\\(\\)]+?)}"
+
+  runtime: provided
+  httpApi:
+    payload: '2.0'
+  environment:
+    APP_ENV: lambda
+    # configure the domain name and CloudFront trust
+    HTTP_X_FORWARDED_HOST: ${self:custom.DomainName} # this is populated into $_SERVER and therefore accepted as header value
+    TRUSTED_HOSTS: !Sub ['^${DomainName}$', {DomainName: !Join ['\.', !Split ['.', '${self:custom.DomainName}']]}]
+    TRUSTED_PROXIES: '127.0.0.1' # api gateway acts as a proxy and tells us that it is 127.0.0.1
+    # WARNING: X-Forwarded-Ip will contain the CloudFront ip and the client ip but Request::clientIp returns the cloudfront ip
+    # configure service dependencies
+    DATABASE_URL: !Sub '//${AWS::Region}/${Database}?serverVersion=5.7&driverOptions[resourceArn]=${Database.Server}&driverOptions[secretArn]=${DatabaseUser}'
+    MAILER_DSN: !Sub 'ses://default?region=${AWS::Region}'
+    SESSION_TABLE: !Ref SessionTable
+
+  iamRoleStatements:
+    - {Effect: Allow, Action: rds-data:*, Resource: '*'}
+    - {Effect: Allow, Action: secretsmanager:GetSecretValue, Resource: !Ref DatabaseUser}
+    - {Effect: Allow, Action: ses:SendEmail, Resource: '*'}
+    - {Effect: Allow, Action: dynamodb:*Item, Resource: !GetAtt SessionTable.Arn}
+
+
+package:
+  excludeDevDependencies: false # only excludes node dev dependencies which we exclude entirely 2 lines below
+  exclude:
+    - 'node_modules/**'
+    - 'tests/**'
+    - '.env*.local*'
+
+    # deploy the lambda cache; make sure to clear/warm it before deploying
+    - 'var/**'
+    - '!var/cache/${self:provider.environment.APP_ENV}/**'
+
+    # all public resources need to be uploaded to s3 except for the manifest and php files
+    - 'public/**'
+    - '!public/build/manifest.json'
+    - '!public/index.php'
+
+
+functions:
+
+  website:
+    description: HTTP endpoint.
+    handler: public/index.php
+    timeout: 28 # seconds, which is the http api maximum
+    layers: ['${bref:layer.php-74-fpm}']
+    events:
+      - httpApi: '*'
+
+  console:
+    description: Console access.
+    handler: bin/console
+    timeout: 120 # seconds
+    layers: ['${bref:layer.php-74}', '${bref:layer.console}']
+
+  schema:
+    description: Handles schema updates/migrations in CloudFormation.
+    handler: cloudformation/schema.php
+    timeout: 900 # seconds (maximum)
+    memorySize: 192 # mb, this lambda mostly waits for the db
+    layers: ['${bref:layer.php-74}']
+
+resources:
+  Resources:
+
+    Distribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Comment: !Ref AWS::StackName
+          Enabled: true
+          PriceClass: PriceClass_100
+          HttpVersion: http2
+          Aliases: ${self:custom.DomainConfiguration.current.Aliases, self:custom.NoValue}
+          ViewerCertificate: ${self:custom.DomainConfiguration.current.ViewerCertificate, self:custom.NoValue}
+          Origins:
+            - Id: Assets
+              DomainName: !GetAtt Assets.RegionalDomainName
+              S3OriginConfig: {OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${DistributionIdentity}'}
+            - Id: Website
+              DomainName: ${self:custom.ApiGatewayDomainName}
+              CustomOriginConfig: {OriginProtocolPolicy: https-only}
+          CacheBehaviors:
+            - PathPattern: '*.*' # catches build/*.js but also favicon.ico, robots.txt etc...
+              TargetOriginId: Assets
+              AllowedMethods: [GET, HEAD]
+              ForwardedValues: {QueryString: false, Cookies: {Forward: none}}
+              ViewerProtocolPolicy: redirect-to-https
+              Compress: true
+          DefaultCacheBehavior:
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            TargetOriginId: Website
+            DefaultTTL: 0
+            MinTTL: 0
+            MaxTTL: 0
+            ForwardedValues: {QueryString: true, Cookies: {Forward: all}, Headers: [User-Agent, X-Requested-With]}
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: true
+          CustomErrorResponses:
+            - {ErrorCode: 500, ErrorCachingMinTTL: 0}
+            - {ErrorCode: 504, ErrorCachingMinTTL: 0}
+    DistributionIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: !Sub "${AWS::StackName} Distribution"
+
+    Assets:
+      Type: AWS::S3::Bucket
+    AssetsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref Assets
+        PolicyDocument:
+          Statement:
+            - {Effect: Allow, Action: s3:GetObject, Principal: {CanonicalUser: !GetAtt DistributionIdentity.S3CanonicalUserId}, Resource: !Sub '${Assets.Arn}/*'}
+
+    SessionTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: !Sub '${AWS::StackName}-sessions'
+        AttributeDefinitions:
+          - {AttributeName: id, AttributeType: S}
+        KeySchema:
+          - {AttributeName: id, KeyType: HASH}
+        TimeToLiveSpecification:
+          {AttributeName: expires, Enabled: true}
+        # use ProvisionedThroughput (instead of PAY_PER_REQUEST) to take advantage of the free-tier capacity
+        # this here is enough capacity for 2 page views per second + bursts
+        ProvisionedThroughput: {ReadCapacityUnits: 2, WriteCapacityUnits: 2}
+        #BillingMode: PAY_PER_REQUEST
+
+    Database:
+      Type: Custom::Database
+      Properties:
+        ServiceToken: !ImportValue '${self:custom.SharedStack}-database-service-token'
+        Name: !Ref AWS::StackName
+    DatabaseUserSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: !Sub '/${self:custom.SharedStack}/database/${AWS::StackName}'
+        GenerateSecretString:
+          SecretStringTemplate: !Sub '{"username": "${AWS::StackName}"}'
+          GenerateStringKey: "password"
+          ExcludeCharacters: '"@/\'
+    DatabaseUserSecretAttachment:
+      Type: AWS::SecretsManager::SecretTargetAttachment
+      Properties:
+        SecretId: !Ref DatabaseUserSecret
+        TargetId: !ImportValue '${self:custom.SharedStack}-database-server'
+        TargetType: AWS::RDS::DBCluster
+    DatabaseUser:
+      Type: Custom::DatabaseUser
+      DependsOn: DatabaseUserSecretAttachment
+      Properties:
+        ServiceToken: !ImportValue '${self:custom.SharedStack}-database-user-service-token'
+        SecretId: !Ref DatabaseUserSecret
+        Privileges:
+          - {Permission: ALL, Database: !Ref Database, Table: '*'}
+    DatabaseUserSecretRotation:
+      Type: AWS::SecretsManager::RotationSchedule
+      Properties:
+        SecretId: !Ref DatabaseUser
+        RotationRules: {AutomaticallyAfterDays: 30}
+        RotationLambdaARN: !ImportValue '${self:custom.SharedStack}-database-secret-rotation-lambda'
+    DatabaseSchema:
+      Type: Custom::DatabaseSchema
+      Properties:
+        ServiceToken: !GetAtt SchemaLambdaFunction.Arn
+        Version: ${file(cloudformation/schema.js):latest}
+
+  Outputs:
+    AssetsBucket:
+      Description: This is the bucket id for all assets
+      Value: !Ref Assets
+    DistributionDomain:
+      Description: The domain of the CDN
+      Value: !GetAtt Distribution.DomainName
+    DistributionUrl:
+      Description: The url of the CDN
+      Value: !Sub 'https://${Distribution.DomainName}'
