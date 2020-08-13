@@ -17,11 +17,11 @@ custom:
   DistributionDomainName: !GetAtt Distribution.DomainName
   DomainName: ${env:DOMAIN, self:custom.DistributionDomainName}
   DomainConfiguration:
-    current: ${self:custom.DomainConfiguration.${env:CERTIFICATE, 'withoutCertificate'}, self:custom.DomainConfiguration.withCertificate}
-    withoutCertificate:
+    current: ${self:custom.DomainConfiguration.${env:DOMAIN, 'cloudfront'}, self:custom.DomainConfiguration.custom}
+    cloudfront: # use a cloudfront domain
       Aliases: !Ref AWS::NoValue
       ViewerCertificate: !Ref AWS::NoValue
-    withCertificate:
+    custom: # use a custom certificate
       Aliases: ['${self:custom.DomainName}']
       ViewerCertificate:
         AcmCertificateArn: ${env:CERTIFICATE, 'null'}
