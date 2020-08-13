@@ -29,6 +29,9 @@
     "async-aws/rds-data-service": {
         "version": "0.1-dev"
     },
+    "async-aws/ses": {
+        "version": "1.2.0"
+    },
     "bref/bref": {
         "version": "0.5.29"
     },

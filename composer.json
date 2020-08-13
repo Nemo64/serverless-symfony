@@ -8,6 +8,7 @@
         "async-aws/async-aws-bundle": "^1.0",
         "async-aws/dynamo-db-session": "^0.1.0",
         "async-aws/rds-data-service": "dev-master",
+        "async-aws/ses": "^1.2",
         "bref/bref": "^0.5.29",
         "composer/package-versions-deprecated": "^1.10",
         "doctrine/annotations": "^1.0",

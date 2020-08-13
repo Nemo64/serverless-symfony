@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "dd0cc2d57129c2047b428b0fa8dcec21",
+    "content-hash": "c1409a990afa23a43eb98a345f4b0c9d",
     "packages": [
         {
             "name": "async-aws/async-aws-bundle",
@@ -408,6 +408,60 @@
                 }
             ],
             "time": "2020-06-09T12:33:12+00:00"
+        },
+        {
+            "name": "async-aws/ses",
+            "version": "1.2.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/async-aws/ses.git",
+                "reference": "16dfe62c117cbfeabd2cb1b945ae58bcd3e98eac"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/async-aws/ses/zipball/16dfe62c117cbfeabd2cb1b945ae58bcd3e98eac",
+                "reference": "16dfe62c117cbfeabd2cb1b945ae58bcd3e98eac",
+                "shasum": ""
+            },
+            "require": {
+                "async-aws/core": "^1.0",
+                "ext-json": "*",
+                "php": "^7.2.5 || ^8.0"
+            },
+            "type": "library",
+            "extra": {
+                "branch-alias": {
+                    "dev-master": "1.1-dev"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "AsyncAws\\Ses\\": "src"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "SES client, part of the AWS SDK provided by AsyncAws.",
+            "keywords": [
+                "amazon",
+                "async-aws",
+                "aws",
+                "sdk",
+                "ses"
+            ],
+            "funding": [
+                {
+                    "url": "https://github.com/jderusse",
+                    "type": "github"
+                },
+                {
+                    "url": "https://github.com/nyholm",
+                    "type": "github"
+                }
+            ],
+            "time": "2020-08-02T09:49:41+00:00"
         },
         {
             "name": "bref/bref",
@@ -9004,7 +9058,7 @@
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
-        "php": "^7.2.5",
+        "php": "^7.4",
         "ext-ctype": "*",
         "ext-iconv": "*"
     },
