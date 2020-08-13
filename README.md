@@ -19,6 +19,8 @@ What features are configured for aws?
 - Mails are send using SES (although i haven't added a way to test it.)
 - The main Database is an Aurora Serverless which can be securely shared between multiple instances/stages of this application
   and is connected via the rds-data http api to avoid VPC's and also to get pool management.
+- A Boilerplate on how to configure scheduled enabling/disabling auf Aurora's pausing feature to cover eg. work times.
+- Handling of a paused aurora in the form of a 503 response with a Retry-After. You still need to implement a nive error page though.
  
 Documentation
 -------------
@@ -44,7 +46,7 @@ Deploy it to AWS
 You need an AWS account and have credentials set up so that the serverless framework can use them.
 After that run these commands:
 
-- install dependencies using `composer install --no-dev --optimize-autoloader --classmap-authoritative` 
+- install dependencies using `composer install --no-dev --optimize-autoloader --classmap-authoritative --no-scripts` 
 - `sls deploy -v -c serverless-shared.yml` which will deploy a CloudFormation stack with VPC configuration and a database server (Aurora Serverless).
 - `bin/console cache:clear -e lambda` which will clear and then build (cache) files for the lambda environment.
 - `sls deploy -v` which will then deploy this project the infrastructure and code
