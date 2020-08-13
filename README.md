@@ -47,8 +47,8 @@ You need an AWS account and have credentials set up so that the serverless frame
 After that run these commands:
 
 - install dependencies using `composer install --no-dev --optimize-autoloader --classmap-authoritative --no-scripts` 
-- `sls deploy -v -c serverless-shared.yml` which will deploy a CloudFormation stack with VPC configuration and a database server (Aurora Serverless).
 - `bin/console cache:clear -e lambda` which will clear and then build (cache) files for the lambda environment.
+- `sls deploy -v -c serverless-shared.yml` which will deploy a CloudFormation stack with VPC configuration and a database server (Aurora Serverless).
 - `sls deploy -v` which will then deploy this project the infrastructure and code
 - `aws s3 sync public "s3://$(sls info -v|grep AssetsBucket:|cut -d ' ' -f2)" --exclude="*.php" --cache-control "public, max-age=300"`
   to upload static files into the assets bucket (I'm still working on automating this)
