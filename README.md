@@ -78,5 +78,6 @@ while using this repo as a reference.
 
 Contribution
 ------------
-If you want to share your knowledge I'd be happy to accept changes.
-The main goal is elegance here. 
+If you want to share your knowledge I'd be happy to accept changes. Feel free to add references to your blog posts if they fit.
+
+The main goal is elegance here. A lot of features can be hacked together, but the more transparent and portable a feature is, the better.
