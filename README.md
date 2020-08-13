@@ -10,6 +10,16 @@ I usually can't make my work projects public, but I can extract the knowledge fr
 I probably continue to tweak this project as my knowledge grows.
 One main goal is to not modify or create too many skeleton files to keep it simple.
 
+What features are configured for aws?
+-------------------------------------
+- Volatile caches write into `/tmp` in the lambda environment
+- Logs are written into the lambdas CloudWatch log group
+- Static assets (although currently just a robots.txt) are distributed under the same domain as the application behind a CloudFront CDN
+- Sessions are persisted in a DynamoDB
+- Mails are send using SES (although i haven't added a way to test it.)
+- The main Database is an Aurora Serverless which can be securely shared between multiple instances/stages of this application
+  and is connected via the rds-data http api to avoid VPC's and also to get pool management.
+ 
 Documentation
 -------------
 I build this repo to have working examples of various technics of hosting symfony on aws.
@@ -44,11 +54,15 @@ After that run these commands:
 The deploy command will also output the stack outputs which contains the `DistributionUrl`. Use it to view the page.
 If you missed it run `sls info -v` to see all outputs again.
 
+You can also easily deploy the project with a domain by defining the next 2 environment variables:
+- `DOMAIN` which must the hostname without anything around it like `example.com`
+- `CERTIFICATE` which must be an arn to a certificate for that domain hosted in `us-east-1` (for cloudfront).
+
 What is still missing
 ---------------------
 - I need a more elegant way to deploy assets.
   I have used [serverless-s3-deploy](https://github.com/funkybob/serverless-s3-deploy) in the past,
-  but that plugin gets slow when deploying a lot so I'll search/develop a better way.
+  but that plugin gets slow when deploying many files, so I want to search/develop a better way.
 - Monitoring ~ one of the most important features and I still haven't put time into it. Shame
 - Better CDN/proxy handling. The main issue is that `\Symfony\Component\HttpFoundation\Request::getClientIp`
   will return the ip of the CloudFront node, not the real client ip.
