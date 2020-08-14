@@ -18,7 +18,7 @@ resources:
 
   Resources:
 
-    # Configure a simple vpc.
+    # Configure a minimal vpc.
     # It is roughly inspired by the official template but there aren't public or private subnets.
     # https://docs.aws.amazon.com/codebuild/latest/userguide/cloudformation-vpc-template.html
 
@@ -46,6 +46,7 @@ resources:
         VpcId: !Ref VPC
 
     # Configure a Database Server
+    # This is intended to be shared over multiple stages, so you can realistically do crazy stuff like deploying feature branches.
 
     DatabaseSubnetGroup:
       Type: AWS::RDS::DBSubnetGroup
@@ -96,6 +97,14 @@ resources:
         ScalingConfiguration: {MinCapacity: 1, MaxCapacity: 2, AutoPause: true}
         DBSubnetGroupName: !Ref DatabaseSubnetGroup
         VpcSecurityGroupIds: [!GetAtt DatabaseSecurityGroup.GroupId]
+
+    # The next function can be used to schedule scaling of the database.
+    # This is mostly useful to enable/disable the AutoPause feature as it is really annoying.
+    # With this scheduling, you can disable AutoPause during work hours and enable it during off time.
+    # 24 hours/day 7 days/week = ~$50/month; 10 hours/day 5 days/week = ~$15/month
+    # I disabled the events below for this demo project but you should enable them for active development.
+    # Remember that the cron syntax is in utc
+
     DatabaseScalingSchedule:
       Type: AWS::Serverless::Function
       Properties:
@@ -106,10 +115,9 @@ resources:
         MemorySize: 128 # mb, this function basically just waits for the api
         Role: !GetAtt DatabaseAccessPolicy.Arn
         Environment: {Variables: {SERVER: !Ref DatabaseServer}}
-        # Feel free to define a scaling schedule here
         #Events:
-        #  Worktime: {Type: Schedule, Properties: {Schedule: 'cron(5 13 ? * MON-FRI *)', Input: '{"AutoPause": false, "MinCapacity": 1, "MaxCapacity": 4}'}}
-        #  Freetime: {Type: Schedule, Properties: {Schedule: 'cron(10 13 * * ? *)', Input: '{"AutoPause": true, "MinCapacity": 1, "MaxCapacity": 2}'}}
+        #  Worktime: {Type: Schedule, Properties: {Schedule: 'cron(0 7 ? * MON-FRI *)', Input: '{"AutoPause": false, "MinCapacity": 1, "MaxCapacity": 4}'}}
+        #  Freetime: {Type: Schedule, Properties: {Schedule: 'cron(0 17 ? * MON-FRI *)', Input: '{"AutoPause": true, "MinCapacity": 1, "MaxCapacity": 2}'}}
         InlineCode: |-
           const RDS = new (require('aws-sdk/clients/rds'))({apiVersion: '2014-10-31'});
           exports.handler = async function (event) {
@@ -118,6 +126,7 @@ resources:
 
     # Create some lambda functions to easily manage the database.
     # Those are then exported for use in different stacks.
+    # Note that these functions are not hardened against SQL injection so don't give access to people you don't trust.
 
     DatabaseAccessPolicy:
       Type: AWS::IAM::Role
@@ -184,7 +193,6 @@ resources:
               console.log(sql);
               return RDSDataService.executeStatement({resourceArn, secretArn, sql}).promise();
           }
-
     DatabaseUserResourceLambda:
       Type: AWS::Serverless::Function
       Properties:

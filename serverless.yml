@@ -106,8 +106,13 @@ functions:
     memorySize: 192 # mb, this lambda mostly waits for the db
     layers: ['${bref:layer.php-74}']
 
+
 resources:
   Resources:
+
+    # This application will be available behind a CDN.
+    # The CDN acts like an apache in normal LAMP stack and will decide
+    # which resources come from lambda and which come from S3
 
     Distribution:
       Type: AWS::CloudFront::Distribution
@@ -151,6 +156,11 @@ resources:
         CloudFrontOriginAccessIdentityConfig:
           Comment: !Sub "${AWS::StackName} Distribution"
 
+    # Static files are stored in an S3 bucket.
+    # This bucked is then integrated into the Distribution.
+    # Deployment is manually atm so you need to run "aws s3 sync"
+    # Look into the README.md for deployment instructions.
+
     Assets:
       Type: AWS::S3::Bucket
     AssetsBucketPolicy:
@@ -160,6 +170,10 @@ resources:
         PolicyDocument:
           Statement:
             - {Effect: Allow, Action: s3:GetObject, Principal: {CanonicalUser: !GetAtt DistributionIdentity.S3CanonicalUserId}, Resource: !Sub '${Assets.Arn}/*'}
+
+    # Session information is stored in a DynamoDB.
+    # This is because DynamoDB _can_ scale a lot better than a relational database.
+    # It is also capable of automatically deleting expired entries which is nice.
 
     SessionTable:
       Type: AWS::DynamoDB::Table
@@ -175,6 +189,10 @@ resources:
         # this here is enough capacity for 2 page views per second + bursts
         ProvisionedThroughput: {ReadCapacityUnits: 2, WriteCapacityUnits: 2}
         #BillingMode: PAY_PER_REQUEST
+
+    # The relational database for this project.
+    # I like to note that we don't create a database server here, just a database and a user
+    # To create the database server, you need to deploy the shared stack first.
 
     Database:
       Type: Custom::Database
@@ -209,6 +227,12 @@ resources:
         SecretId: !Ref DatabaseUser
         RotationRules: {AutomaticallyAfterDays: 30}
         RotationLambdaARN: !ImportValue '${self:custom.SharedStack}-database-secret-rotation-lambda'
+
+    # I also include the schema as a CloudFormation resource.
+    # A small javascript will determine the latest migration version before deploying.
+    # This custom resource will than update which will run the doctrine:migration:migrate command with that version.
+    # If the deploy fails, CloudFormation will update with the old version which will migrate to the old version.
+
     DatabaseSchema:
       Type: Custom::DatabaseSchema
       Properties:
