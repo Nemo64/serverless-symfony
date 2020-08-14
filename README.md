@@ -60,6 +60,26 @@ You can also easily deploy the project with a domain by defining the next 2 envi
 - `DOMAIN` which must the hostname without anything around it like `example.com`
 - `CERTIFICATE` which must be an arn to a certificate for that domain hosted in `us-east-1` (for cloudfront).
 
+How to use this?
+----------------
+You should probably just create a new symfony project and follow
+[Configure symfony for a serverless lambda environment in bref](https://www.marco.zone/configure-symfony-for-serverless-lambda)
+while using this repo as a reference.
+
+But, if you want, you can just copy the following files into your symfony project:
+```
+config/lambda/**
+cloudformation/**
+php/**
+public/index.php - the trusted proxy configuration is different
+.env.lambda
+serverless.yml
+serverless-shared.yml
+```
+
+and then `composer install bref/bref async-aws/async-aws-bundle async-aws/dynamo-db-session async-aws/ses nemo64/dbal-rds-data`
+and you should be ready to deploy.
+
 What is still missing
 ---------------------
 - I need a more elegant way to deploy assets.
@@ -70,12 +90,6 @@ What is still missing
   will return the ip of the CloudFront node, not the real client ip.
   The hostname is working correctly so there is no issue there.
   
-How to use this?
-----------------
-You should probably just create a new symfony project and follow
-[Configure symfony for a serverless lambda environment in bref](https://www.marco.zone/configure-symfony-for-serverless-lambda)
-while using this repo as a reference.
-
 Contribution
 ------------
 If you want to share your knowledge I'd be happy to accept changes. Feel free to add references to your blog posts if they fit.
