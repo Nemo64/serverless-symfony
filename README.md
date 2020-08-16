@@ -28,6 +28,7 @@ I build this repo to have working examples of various technics of hosting symfon
 Here are the blog posts currently contained in here:
 
 - [Configure symfony for a serverless lambda environment in bref](https://www.marco.zone/configure-symfony-for-serverless-lambda)
+- [Share an Aurora Serveless between services using CloudFormation](https://www.marco.zone/shared-aurora-serverless-using-cloudformation)
 - [Static resource distribution on a aws serverless multipage application](https://www.marco.zone/asset-distribution-on-a-aws-serverless-multipage-application)
 
 There is more information contained in here that I haven't documented yet.
