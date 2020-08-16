@@ -24,7 +24,13 @@ resources:
 
     VPC:
       Type: AWS::EC2::VPC
-      Properties: {CidrBlock: 10.192.0.0/16, EnableDnsSupport: true, EnableDnsHostnames: true}
+      Properties:
+        CidrBlock: 10.192.0.0/16
+        EnableDnsSupport: true
+        EnableDnsHostnames: true
+        Tags:
+          - {Key: Name, Value: !Ref AWS::StackName} # the console will display this as the name
+
     Subnet1:
       Type: AWS::EC2::Subnet
       Properties: {CidrBlock: 10.192.0.0/20, AvailabilityZone: !Select [0, !GetAZs ''], VpcId: !Ref VPC}
@@ -34,8 +40,9 @@ resources:
     Subnet3:
       Type: AWS::EC2::Subnet
       Properties: {CidrBlock: 10.192.32.0/20, AvailabilityZone: !Select [2, !GetAZs ''], VpcId: !Ref VPC}
+
     # VPC endpoint that will enable the rotation Lambda to make api calls to Secrets Manager
-    VpcEndpointSecretManager:
+    VpcSecretManagerEndpoint:
       Type: AWS::EC2::VPCEndpoint
       Properties:
         SubnetIds: [!Ref Subnet1, !Ref Subnet2, !Ref Subnet3]
@@ -51,12 +58,12 @@ resources:
     DatabaseSubnetGroup:
       Type: AWS::RDS::DBSubnetGroup
       Properties:
-        DBSubnetGroupDescription: Database Subnets
+        DBSubnetGroupDescription: Database
         SubnetIds: [!Ref Subnet1, !Ref Subnet2, !Ref Subnet3]
     DatabaseSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
-        GroupDescription: Database Access
+        GroupDescription: Database
         VpcId: !Ref VPC
         SecurityGroupIngress:
           - {CidrIp: !GetAtt VPC.CidrBlock, FromPort: 3306, ToPort: 3306, IpProtocol: tcp}
@@ -76,7 +83,7 @@ resources:
         TargetType: AWS::RDS::DBCluster
     DatabaseSecretRotation:
       Type: AWS::SecretsManager::RotationSchedule
-      DependsOn: [DatabaseSecretAttachment, VpcEndpointSecretManager]
+      DependsOn: [DatabaseSecretAttachment, VpcSecretManagerEndpoint]
       Properties:
         SecretId: !Ref DatabaseSecret
         RotationRules: {AutomaticallyAfterDays: 30}
@@ -132,10 +139,7 @@ resources:
       Type: AWS::IAM::Role
       Properties:
         RoleName: !Sub '${AWS::StackName}-${AWS::Region}-database-access-policy'
-        AssumeRolePolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            - {Effect: Allow, Action: sts:AssumeRole, Principal: {Service: [lambda.amazonaws.com]}}
+        AssumeRolePolicyDocument: {Version: '2012-10-17', Statement: [{Effect: Allow, Action: sts:AssumeRole, Principal: {Service: [lambda.amazonaws.com]}}]}
         Policies:
           - PolicyName: !Sub "${AWS::StackName}-database-access"
             PolicyDocument:
@@ -170,12 +174,14 @@ resources:
                   const name = event.ResourceProperties.Name;
 
                   if (event.RequestType === 'Delete') {
-                      await executeStatement('DROP DATABASE IF EXISTS `' + name + '`');
+                      const sql = 'DROP DATABASE IF EXISTS `' + name + '`';
+                      await RDSDataService.executeStatement({resourceArn, secretArn, sql}).promise();
                       return await response.send(event, context, response.SUCCESS);
                   }
 
                   if (name !== event.PhysicalResourceId) {
-                      await executeStatement('CREATE DATABASE `' + name + '`');
+                      const sql = 'CREATE DATABASE `' + name + '`';
+                      await RDSDataService.executeStatement({resourceArn, secretArn, sql}).promise();
                   }
 
                   return await response.send(event, context, response.SUCCESS, {Server: resourceArn}, name);
@@ -188,11 +194,6 @@ resources:
                   return await response.send(event, context, response.FAILED);
               }
           };
-
-          function executeStatement(sql) {
-              console.log(sql);
-              return RDSDataService.executeStatement({resourceArn, secretArn, sql}).promise();
-          }
     DatabaseUserResourceLambda:
       Type: AWS::Serverless::Function
       Properties:
@@ -245,7 +246,6 @@ resources:
           };
 
           function executeStatement(sql, parameters) {
-              console.log(sql);
               parameters = Object.entries(parameters).map(([name, stringValue]) => ({name, value: {stringValue}}));
               return RDSDataService.executeStatement({resourceArn, secretArn, sql, parameters}).promise();
           }
