@@ -149,6 +149,7 @@ resources:
             Compress: true
           CustomErrorResponses:
             - {ErrorCode: 500, ErrorCachingMinTTL: 0}
+            - {ErrorCode: 503, ErrorCachingMinTTL: 5} # aurora serverless is paused
             - {ErrorCode: 504, ErrorCachingMinTTL: 0}
     DistributionIdentity:
       Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
