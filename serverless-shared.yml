@@ -13,7 +13,6 @@ provider:
 
 resources:
   Transform:
-    - AWS::SecretsManager-2020-07-23 # for the password rotation function
     - AWS::Serverless-2016-10-31 # for inline lambda function
 
   Resources:
@@ -40,17 +39,6 @@ resources:
     Subnet3:
       Type: AWS::EC2::Subnet
       Properties: {CidrBlock: 10.192.32.0/20, AvailabilityZone: !Select [2, !GetAZs ''], VpcId: !Ref VPC}
-
-    # VPC endpoint that will enable the rotation Lambda to make api calls to Secrets Manager
-    VpcSecretManagerEndpoint:
-      Type: AWS::EC2::VPCEndpoint
-      Properties:
-        SubnetIds: [!Ref Subnet1, !Ref Subnet2, !Ref Subnet3]
-        SecurityGroupIds: [!GetAtt VPC.DefaultSecurityGroup]
-        VpcEndpointType: Interface
-        ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
-        PrivateDnsEnabled: true
-        VpcId: !Ref VPC
 
     # Configure a Database Server
     # This is intended to be shared over multiple stages, so you can realistically do crazy stuff like deploying feature branches.
@@ -81,17 +69,6 @@ resources:
         SecretId: !Ref DatabaseSecret
         TargetId: !Ref DatabaseServer
         TargetType: AWS::RDS::DBCluster
-    DatabaseSecretRotation:
-      Type: AWS::SecretsManager::RotationSchedule
-      DependsOn: [DatabaseSecretAttachment, VpcSecretManagerEndpoint]
-      Properties:
-        SecretId: !Ref DatabaseSecret
-        RotationRules: {AutomaticallyAfterDays: 30}
-        HostedRotationLambda:
-          RotationType: MySQLSingleUser
-          RotationLambdaName: !Sub '${AWS::StackName}-database-secret-rotation'
-          VpcSecurityGroupIds: !GetAtt VPC.DefaultSecurityGroup
-          VpcSubnetIds: !Join [',', [!Ref Subnet1, !Ref Subnet2, !Ref Subnet3]]
     DatabaseServer:
       Type: AWS::RDS::DBCluster
       Properties:
@@ -275,10 +252,6 @@ resources:
       Description: The Database Server Arn
       Value: !Sub 'arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DatabaseServer}'
       Export: {Name: !Sub '${AWS::StackName}-database-server'}
-    DatabaseSecretRotationLambda:
-      Description: Secret Rotation Lambda Arn
-      Value: !GetAtt DatabaseSecretRotationHostedRotationLambda.Outputs.RotationLambdaARN
-      Export: {Name: !Sub '${AWS::StackName}-database-secret-rotation-lambda'}
 
     DatabaseServiceToken:
       Description: Lambda function that can be used to create a database on a database server in CloudFormation

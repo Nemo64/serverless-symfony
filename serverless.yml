@@ -221,12 +221,6 @@ resources:
         SecretId: !Ref DatabaseUserSecret
         Privileges:
           - {Permission: ALL, Database: !Ref Database, Table: '*'}
-    DatabaseUserSecretRotation:
-      Type: AWS::SecretsManager::RotationSchedule
-      Properties:
-        SecretId: !Ref DatabaseUser
-        RotationRules: {AutomaticallyAfterDays: 30}
-        RotationLambdaARN: !ImportValue '${self:custom.SharedStack}-database-secret-rotation-lambda'
 
     # I also include the schema as a CloudFormation resource.
     # A small javascript will determine the latest migration version before deploying.
