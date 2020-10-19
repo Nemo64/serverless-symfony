@@ -58,6 +58,9 @@ provider:
     DATABASE_URL: !Sub '//${AWS::Region}/${Database}?serverVersion=5.7&driverOptions[resourceArn]=${Database.Server}&driverOptions[secretArn]=${DatabaseUser}'
     MAILER_DSN: !Sub 'ses://default?region=${AWS::Region}'
     SESSION_TABLE: !Ref SessionTable
+    # enable binary responses aka base64 encoding for the http api
+    # this not only allows to send binary files but also allow gzip compression on the php side
+    BREF_BINARY_RESPONSES: 1
 
   iamRoleStatements:
     - {Effect: Allow, Action: rds-data:*, Resource: '*'}
@@ -146,7 +149,6 @@ resources:
             MaxTTL: 0
             ForwardedValues: {QueryString: true, Cookies: {Forward: all}, Headers: [User-Agent, X-Requested-With]}
             ViewerProtocolPolicy: redirect-to-https
-            Compress: true
           CustomErrorResponses:
             - {ErrorCode: 500, ErrorCachingMinTTL: 0}
             - {ErrorCode: 503, ErrorCachingMinTTL: 5} # aurora serverless is paused
